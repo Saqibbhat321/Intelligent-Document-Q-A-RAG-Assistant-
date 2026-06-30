@@ -34,7 +34,11 @@ def store(tmp_path):
 
 
 def test_create_index(store):
-    assert store.is_loaded()
+    # After create_index(), the FAISS object exists but has no vectors yet.
+    # is_loaded() requires ntotal > 0 — an empty index is not search-ready.
+    assert store._index is not None
+    assert store._index.ntotal == 0
+    assert not store.is_loaded()
 
 
 def test_add_chunks(store):

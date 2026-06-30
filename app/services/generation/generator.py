@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,9 @@ from app.utils.mlflow_tracker import MLflowTracker
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Number of previous turns to include as conversation memory
+MEMORY_TURNS = 4
 
 
 @dataclass
@@ -39,7 +42,7 @@ class GenerationResult:
 
 class GeneratorService:
     """
-    Orchestrates: retrieve → build prompt → call LLM → return answer + citations.
+    Orchestrates: retrieve → fetch history → build prompt → call LLM → return answer + citations.
     """
 
     def __init__(self, retriever: RetrieverService, llm_client: LLMClient) -> None:
@@ -56,18 +59,22 @@ class GeneratorService:
     ) -> GenerationResult:
         """
         Full RAG pipeline for one user question.
+        Fetches conversation history, retrieves context, generates grounded answer.
         Persists the interaction to chat_messages and logs metrics to MLflow.
         """
-        # 1. Retrieve
+        # 1. Fetch conversation history for this session
+        history = self._fetch_history(session_id, db)
+
+        # 2. Retrieve relevant chunks
         retrieved, retrieval_latency = self.retriever.retrieve(question, top_k=top_k)
 
-        # 2. Build prompt
-        system_msg, user_msg = build_prompt(question, retrieved)
+        # 3. Build prompt with context + history
+        system_msg, user_msg = build_prompt(question, retrieved, conversation_history=history)
 
-        # 3. Generate
+        # 4. Generate
         answer_text, response_latency = self.llm.generate(system_msg, user_msg)
 
-        # 4. Build citations (deduplicated by source+page)
+        # 5. Build citations (deduplicated by source + page)
         seen = set()
         citations: List[Citation] = []
         for rc in retrieved:
@@ -90,10 +97,10 @@ class GeneratorService:
             model_used=self.llm.model,
         )
 
-        # 5. Persist to DB
+        # 6. Persist to DB
         self._save_to_db(question, result, db, session_id, top_k)
 
-        # 6. Track with MLflow
+        # 7. Track with MLflow
         self._tracker.log_query(
             session_id=session_id,
             retrieval_latency=retrieval_latency,
@@ -108,6 +115,18 @@ class GeneratorService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def _fetch_history(self, session_id: str, db: Session) -> List[dict]:
+        """Return the last MEMORY_TURNS Q&A pairs for this session (oldest first)."""
+        rows = (
+            db.query(ChatMessage)
+            .filter(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(MEMORY_TURNS)
+            .all()
+        )
+        # Reverse so oldest turn comes first in the prompt
+        return [{"question": r.question, "answer": r.answer} for r in reversed(rows)]
+
     def _save_to_db(
         self,
         question: str,

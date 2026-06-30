@@ -1,8 +1,7 @@
 """MLflow experiment tracking for ingestion and query runs."""
 
 import logging
-
-import mlflow
+import os
 
 from app.config.settings import get_settings
 
@@ -10,15 +9,37 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def _mlflow_available() -> bool:
+    """Quick TCP check — returns False immediately if MLflow is unreachable."""
+    import socket
+    from urllib.parse import urlparse
+
+    url = urlparse(settings.mlflow_tracking_uri)
+    host = url.hostname or "localhost"
+    port = url.port or 5001
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
 class MLflowTracker:
     """Lightweight wrapper that logs metrics and params to MLflow."""
 
     def __init__(self) -> None:
-        try:
-            mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
-            mlflow.set_experiment(settings.mlflow_experiment_name)
-        except Exception as exc:
-            logger.warning(f"MLflow setup failed (continuing without tracking): {exc}")
+        self._enabled = False
+        if _mlflow_available():
+            try:
+                import mlflow
+                mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
+                mlflow.set_experiment(settings.mlflow_experiment_name)
+                self._enabled = True
+                logger.info("MLflow tracking enabled.")
+            except Exception as exc:
+                logger.warning(f"MLflow setup failed (tracking disabled): {exc}")
+        else:
+            logger.warning("MLflow unreachable — tracking disabled for this session.")
 
     # ------------------------------------------------------------------
     # Ingestion run
@@ -33,8 +54,10 @@ class MLflowTracker:
         total_chunks: int,
         ingestion_latency: float,
     ) -> None:
-        """Log an ingestion run to MLflow."""
+        if not self._enabled:
+            return
         try:
+            import mlflow
             with mlflow.start_run(run_name=f"ingest-{filename}"):
                 mlflow.set_tag("run_type", "ingestion")
                 mlflow.set_tag("document_id", document_id)
@@ -59,8 +82,10 @@ class MLflowTracker:
         model: str,
         num_sources: int,
     ) -> None:
-        """Log a query run to MLflow."""
+        if not self._enabled:
+            return
         try:
+            import mlflow
             with mlflow.start_run(run_name=f"query-{session_id[:8]}"):
                 mlflow.set_tag("run_type", "query")
                 mlflow.set_tag("session_id", session_id)

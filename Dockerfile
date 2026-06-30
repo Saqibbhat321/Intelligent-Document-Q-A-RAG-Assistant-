@@ -30,6 +30,9 @@ COPY --from=builder /install /usr/local
 
 # Copy application source
 COPY app/ ./app/
+COPY streamlit_app.py .
+COPY tests/ ./tests/
+COPY pytest.ini .
 
 # Create necessary directories
 RUN mkdir -p faiss_index uploads mlflow_runs
