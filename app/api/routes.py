@@ -1,5 +1,3 @@
-"""FastAPI route definitions."""
-
 import logging
 import shutil
 import uuid
@@ -21,15 +19,11 @@ settings = get_settings()
 
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
-# Lazy dependency injection for the singleton pipeline/services
-# ---------------------------------------------------------------------------
 _pipeline = None
 _generator = None
 
 
 def get_pipeline():
-    """Return the singleton IngestionPipeline (lazy init)."""
     global _pipeline
     if _pipeline is None:
         from app.services.ingestion.pipeline import IngestionPipeline
@@ -38,63 +32,40 @@ def get_pipeline():
 
 
 def get_generator():
-    """Return the singleton GeneratorService (lazy init)."""
     global _generator
     if _generator is None:
         from app.services.generation.generator import GeneratorService
         from app.services.retrieval.retriever import RetrieverService
 
         pipeline = get_pipeline()
-        retriever = RetrieverService(
-            embedder=pipeline.embedder,
-            vector_store=pipeline.vector_store,
-        )
+        retriever = RetrieverService(embedder=pipeline.embedder,vector_store=pipeline.vector_store,)
         llm = LLMClient()
         _generator = GeneratorService(retriever=retriever, llm_client=llm)
     return _generator
-
-
-# ---------------------------------------------------------------------------
+    
 # Health
-# ---------------------------------------------------------------------------
 @router.get("/health", tags=["System"])
 def health_check():
     """Liveness probe — returns 200 if the API is running."""
     return {"status": "healthy", "version": settings.app_version}
 
 
-# ---------------------------------------------------------------------------
-# Documents
-# ---------------------------------------------------------------------------
 ALLOWED_EXTENSIONS = {"pdf", "docx", "txt"}
 MAX_FILE_SIZE_MB = 50
 
 
-@router.post(
-    "/upload",
+@router.post("/upload",
     response_model=UploadResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["Documents"],
-    summary="Upload a document (PDF, DOCX, TXT)",
-)
+    summary="Upload a document (PDF, DOCX, TXT)",)
 def upload_document(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    """
-    Upload a document to the RAG system.
-
-    - Validates file type and size.
-    - Extracts text, creates chunks, generates embeddings, builds FAISS index.
-    - Persists document metadata to PostgreSQL.
-    """
-    # Validate extension
+    db: Session = Depends(get_db),):
     ext = Path(file.filename or "").suffix.lower().lstrip(".")
     if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file type '{ext}'. Allowed: {sorted(ALLOWED_EXTENSIONS)}",
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file type '{ext}'. Allowed: {sorted(ALLOWED_EXTENSIONS)}",)
 
     # Save to disk
     upload_dir = Path(settings.upload_dir)
@@ -108,8 +79,7 @@ def upload_document(
     except OSError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save file: {exc}",
-        )
+            detail=f"Failed to save file: {exc}",)
 
     # Validate size
     size_mb = dest.stat().st_size / (1024 * 1024)
@@ -153,9 +123,6 @@ def list_documents(db: Session = Depends(get_db)):
     return [DocumentResponse.model_validate(d) for d in docs]
 
 
-# ---------------------------------------------------------------------------
-# Query
-# ---------------------------------------------------------------------------
 @router.post(
     "/query",
     response_model=QueryResponse,
@@ -164,15 +131,8 @@ def list_documents(db: Session = Depends(get_db)):
 )
 def query_documents(
     request: QueryRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    Answer a natural-language question using RAG.
+    db: Session = Depends(get_db),):
 
-    - Embeds the question and retrieves the most relevant chunks from FAISS.
-    - Constructs a grounded prompt and calls the NVIDIA NIM LLM.
-    - Returns the answer with source citations (document name + page number).
-    """
     generator = get_generator()
     try:
         result = generator.answer(
