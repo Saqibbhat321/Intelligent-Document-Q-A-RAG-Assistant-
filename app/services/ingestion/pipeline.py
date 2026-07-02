@@ -1,5 +1,3 @@
-"""End-to-end document ingestion pipeline."""
-
 import logging
 import time
 import uuid
@@ -36,19 +34,14 @@ class IngestionPipeline:
         self._tracker = MLflowTracker()
         self._load_existing_index()
 
-    # ------------------------------------------------------------------
     # Public API
-    # ------------------------------------------------------------------
     def ingest(
         self,
         file_path: str | Path,
         original_filename: str,
         db: Session,
     ) -> Document:
-        """
-        Run the full ingestion pipeline for one document.
-        Returns the persisted Document record.
-        """
+    
         path = Path(file_path)
         start_total = time.perf_counter()
 
@@ -117,9 +110,6 @@ class IngestionPipeline:
             db.commit()
             raise
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
     def _load_existing_index(self) -> None:
         """Load persisted FAISS index on startup (if it exists)."""
         try:
